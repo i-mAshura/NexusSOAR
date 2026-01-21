@@ -49,7 +49,7 @@ graph LR
     Server -->|Log Event| Wazuh[Wazuh Manager]
     
     subgraph "SOC Automation Loop"
-        Wazuh -->|Criteria Matched (Lvl 8+)| Bridge[Integration Script]
+        Wazuh -->|"Criteria Matched (Lvl 8+)"| Bridge[Integration Script]
         Bridge -->|JSON Payload| Webhook[n8n Listener]
         
         Webhook --> Logic{Public IP?}
@@ -115,6 +115,20 @@ Once the script finishes, you will see a summary screen. Access your tools here:
 *   **📉 Noise Reduction**: Intelligently filters out false positives using threat intel.
 *   **💼 Professional Reporting**: Generates beautiful, compliant-ready tickets automatically.
 *   **📱 Mobile First**: Manage basic incident awareness directly from Telegram.
+
+---
+
+## 📸 Screenshots
+
+| **Wazuh Dashboard** | **n8n Workflow** |
+|:---:|:---:|
+| ![Wazuh](Pictures/WAZUH%20VISUAL%20DASHBOARD.jpg) | ![n8n](Pictures/N8N%20WORKFLOW.jpg) |
+
+| **Catalyst Dashboard** | **Tickets & Alerts** |
+|:---:|:---:|
+| ![Catalyst](Pictures/CATALYST%20DASHBOARD.jpg) | ![Telegram](Pictures/SAMPLE%20TICKET%20ON%20TELEGRAM.jpg) |
+
+> *Experience the power of visualization and real-time alerts.*
 
 ---
 
