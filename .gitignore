@@ -1,0 +1,25 @@
+# System
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+*.log.*
+
+# Dependencies / Binaries
+*.tar.gz
+*.zip
+node_modules/
+catalyst
+wazuh-install.sh
+
+# Secrets
+.env
+*.key
+*.pem
+wazuh-passwords.txt
+catalyst_token_*.txt
+
+# Editor
+.vscode/
+.idea/

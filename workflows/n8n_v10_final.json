@@ -1,0 +1,366 @@
+{
+    "name": "Wazuh -> AbuseIPDB -> Catalyst -> Telegram (V10 Final Edition)",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "wazuh-alert",
+                "options": {
+                    "responseData": "Alert Processed"
+                }
+            },
+            "id": "cb1b431e-03b1-4c82-8d42-70918a0b3cc2",
+            "name": "Webhook (Wazuh Source)",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [
+                -640,
+                64
+            ],
+            "webhookId": "wazuh-alert-webhook"
+        },
+        {
+            "parameters": {
+                "functionCode": "// Handle input from Webhook\nconst body = $json.body || $json;\n\n// Safe extraction\nconst extracted = {\n  timestamp: body.timestamp || new Date().toISOString(),\n  rule_id: body.rule?.id || \"-\",\n  rule_level: body.rule?.level || 0,\n  rule_description: body.rule?.description || \"Unknown Alert\",\n  agent_name: body.agent?.name || \"Unknown Agent\",\n  agent_ip: body.agent?.ip || \"0.0.0.0\",\n  full_log: body.full_log || \"No log details provided.\",\n  src_ip: body.data?.srcip || \"0.0.0.0\",\n  src_user: body.data?.srcuser || \"-\",\n  dst_ip: body.data?.dstip || \"-\",\n  location: body.location || \"-\",\n  \n  // Arrays to strings - Clean and Join\n  pci_dss: Array.isArray(body.rule?.pci_dss) ? body.rule.pci_dss.join(', ') : (body.rule?.pci_dss || \"N/A\"),\n  mitre_technique: Array.isArray(body.rule?.mitre?.id) ? body.rule.mitre.id.join(', ') : (body.rule?.mitre?.id || \"N/A\"),\n  hipaa: Array.isArray(body.rule?.hipaa) ? body.rule.hipaa.join(', ') : (body.rule?.hipaa || \"N/A\"),\n  nist: Array.isArray(body.rule?.nist_800_53) ? body.rule.nist_800_53.join(', ') : (body.rule?.nist_800_53 || \"N/A\"),\n  gdpr: Array.isArray(body.rule?.gdpr) ? body.rule.gdpr.join(', ') : (body.rule?.gdpr || \"N/A\")\n};\n\n// Determine if IP is Public\nconst privateIpRegex = /^(10\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.|192\\.168\\.|127\\.|0\\.)/;\nextracted.is_public_ip = !privateIpRegex.test(extracted.src_ip) && extracted.src_ip !== \"-\" && extracted.src_ip !== \"0.0.0.0\";\n\nreturn [{ json: extracted }];"
+            },
+            "id": "9049b54c-5c2a-4cdf-a795-55e4c96170a2",
+            "name": "Extract Alert Data",
+            "type": "n8n-nodes-base.function",
+            "typeVersion": 1,
+            "position": [
+                -400,
+                64
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "boolean": [
+                        {
+                            "value1": "={{ $json.is_public_ip }}",
+                            "value2": true
+                        }
+                    ]
+                }
+            },
+            "id": "15edcc97-d60c-4607-895d-221eaebc9b93",
+            "name": "Is Public IP?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                -160,
+                64
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://api.abuseipdb.com/api/v2/check",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "ipAddress",
+                            "value": "={{ $json.src_ip }}"
+                        },
+                        {
+                            "name": "maxAgeInDays",
+                            "value": "90"
+                        },
+                        {
+                            "name": "verbose",
+                            "value": "true"
+                        }
+                    ]
+                },
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Key",
+                            "value": "<YOUR_ABUSEIPDB_KEY>"
+                        },
+                        {
+                            "name": "Accept",
+                            "value": "application/json"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "db08b0dc-a0bd-4b5c-a415-39ab807bba7b",
+            "name": "AbuseIPDB Enrichment",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [
+                144,
+                -64
+            ],
+            "retryOnFail": true,
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "values": {
+                    "string": [
+                        {
+                            "name": "data.abuseConfidenceScore",
+                            "value": "0"
+                        },
+                        {
+                            "name": "data.countryCode",
+                            "value": "INT"
+                        },
+                        {
+                            "name": "data.isp",
+                            "value": "Internal / Unknown"
+                        },
+                        {
+                            "name": "data.domain",
+                            "value": "N/A"
+                        },
+                        {
+                            "name": "data.usageType",
+                            "value": "Private/Local"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "c8dc8f84-ddbe-4342-a955-afcc5a889491",
+            "name": "Set Internal Defaults",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 1,
+            "position": [
+                144,
+                176
+            ]
+        },
+        {
+            "parameters": {
+                "functionCode": "// Combine Wazuh Data with Threat Intel\nconst alert = $items(\"Extract Alert Data\")[0].json;\nconst intel = $json.data || {}; \n\n// --- Helper: Escape Special Characters for Telegram Markdown ---\n// This prevents \"Bad Request\" errors when logs contain _, *, or [\nfunction sanitize(text) {\n  if (!text) return \"\";\n  return text.toString()\n    .replace(/_/g, \"\\\\_\")   // Escape underscores\n    .replace(/\\*/g, \"\\\\*\")  // Escape asterisks\n    .replace(/\\[/g, \"\\\\[\")  // Escape brackets\n    .replace(/`/g, \"'\");    // Replace backticks with quotes\n}\n\n// 1. Normalize Intel Data\nconst score = intel.abuseConfidenceScore || 0;\nconst country = intel.countryCode || \"Unknown\";\nconst isp = intel.isp || \"Unknown\";\nconst domain = intel.domain || \"N/A\";\nconst usage = intel.usageType || \"Unknown\";\n\n// 2. Build Components (We build two versions: one for Catalyst, one for Telegram)\n\n// --- CATALYST VERSION (Clean Visuals) ---\nconst intelSection = `\n🌍 **Threat Intelligence Analysis**\n• **Risk Score:** ${score}/100 ${score > 50 ? '🔴' : score > 20 ? '🟠' : '🟢'}\n• **ISP:** ${isp}\n• **Usage Type:** ${usage}\n• **Domain:** ${domain}\n• **Country:** ${country}\n• **AbuseIPDB Link:** [View Report](https://www.abuseipdb.com/check/${alert.src_ip})`;\n\nconst analysisSection = `\n🔎 **Analysis**\nActivity detected on ${alert.location || 'Unknown Location'}.\n• **Risk:** Level ${alert.rule_level}\n• **MITRE:** ${alert.mitre_technique || 'N/A'}`;\n\nconst ticketBody = `🚨 **Alert Summary**\nDetected at: ${alert.timestamp}\n\n🖥️ **Agent:** ${alert.agent_name} (${alert.agent_ip})\n📋 **Rule ID:** ${alert.rule_id}\n🧠 **Description:** ${alert.rule_description}\n📊 **Severity Level:** ${alert.rule_level}\n\n📌 **Source Details**\n• **Source IP:** ${alert.src_ip}\n• **User:** ${alert.src_user}\n• **Location:** ${alert.location}\n${intelSection}\n${analysisSection}\n\n🧩 **Full Log**\n\\`\\`\\`\n${alert.full_log}\n\\`\\`\\`\n\n🧾 **Compliance Mappings**\n• **PCI-DSS:** ${alert.pci_dss}\n• **HIPAA:** ${alert.hipaa}\n• **NIST 800-53:** ${alert.nist}\n• **GDPR:** ${alert.gdpr}\n• **MITRE:** ${alert.mitre_technique}`;\n\n\n// --- TELEGRAM VERSION (Sanitized for Errors) ---\n// We run the dynamic data through sanitize() to fix the \"Byte Offset 948\" error\n\nconst tg_Intel = `\n🌍 *Threat Intelligence Analysis*\n• *Risk Score:* ${score}/100 ${score > 50 ? '🔴' : score > 20 ? '🟠' : '🟢'}\n• *ISP:* ${sanitize(isp)}\n• *Country:* ${sanitize(country)}\n• [AbuseIPDB Report](https://www.abuseipdb.com/check/${alert.src_ip})`;\n\nconst tg_Analysis = `\n🔎 *Analysis*\nActivity detected on ${sanitize(alert.location)}.\n• *Risk:* Level ${alert.rule_level}\n• *MITRE:* ${sanitize(alert.mitre_technique || 'N/A')}`;\n\nconst telegramBody = `🚨 *Alert Summary*\nDetected at: ${sanitize(alert.timestamp)}\n\n🖥️ *Agent:* ${sanitize(alert.agent_name)} (${alert.agent_ip})\n📋 *Rule ID:* ${alert.rule_id}\n🧠 *Description:* ${sanitize(alert.rule_description)}\n📊 *Severity Level:* ${alert.rule_level}\n\n📌 *Source Details*\n• *Source IP:* ${alert.src_ip}\n• *User:* ${sanitize(alert.src_user)}\n• *Location:* ${sanitize(alert.location)}\n${tg_Intel}\n${tg_Analysis}\n\n🧩 *Full Log*\n\\`\\`\\`\n${alert.full_log.replace(/`/g, \"'\")} \n\\`\\`\\`\n(Note: Log backticks replaced to preserve formatting)\n\n🧾 *Compliance Mappings*\n• *PCI-DSS:* ${sanitize(alert.pci_dss)}\n• *MITRE:* ${sanitize(alert.mitre_technique)}`;\n\n\n// 3. Calculate Priority\nlet priority = \"medium\";\nif (alert.rule_level >= 10 || score > 80) priority = \"critical\";\nelse if (alert.rule_level >= 7 || score > 50) priority = \"high\";\nelse if (alert.rule_level >= 5) priority = \"medium\";\nelse priority = \"low\";\n\nreturn [{\n  json: {\n    ticket_title: `[Level ${alert.rule_level}] ${alert.rule_description} on ${alert.agent_ip}`,\n    ticket_description: ticketBody,       // Send this to Catalyst\n    telegram_description: telegramBody,   // Send this to Telegram\n    ticket_priority: priority,\n    ip_score: score\n  }\n}];"
+            },
+            "id": "74b1ebfa-1537-4957-8065-f1e4923beabe",
+            "name": "Format Premium Ticket",
+            "type": "n8n-nodes-base.function",
+            "typeVersion": 1,
+            "position": [
+                544,
+                64
+            ]
+        },
+        {
+            "parameters": {
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpBearerAuth",
+                "requestMethod": "POST",
+                "url": "http://catalystip:8090/api/tickets",
+                "allowUnauthorizedCerts": true,
+                "jsonParameters": true,
+                "options": {
+                    "bodyContentType": "json"
+                },
+                "bodyParametersJson": "={\n  \"name\": \"{{$json.ticket_title}}\",\n  \"type\": \"alert\",\n  \"description\": \"{{$json.ticket_description.replaceAll('\\\"', '\\\\\\\"').replaceAll('\\n', '\\\\n')}}\",\n  \"open\": true,\n  \"priority\": \"{{$json.ticket_priority}}\",\n  \"owner\": \"admin@catalyst.local\"\n}"
+            },
+            "id": "5032676e-07b3-418d-8f0d-96e49be7e0af",
+            "name": "Create Ticket in Catalyst1",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 2,
+            "position": [
+                848,
+                64
+            ],
+            "alwaysOutputData": true,
+            "credentials": {
+                "httpBearerAuth": {
+                    "id": "iQRdBsRPewjVAcga",
+                    "name": "Bearer Auth account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "boolean": [
+                        {
+                            "value1": "={{ $json.id !== undefined }}",
+                            "value2": true
+                        }
+                    ]
+                }
+            },
+            "id": "646cbae9-9555-46f1-be6e-ba9a4a3a09c9",
+            "name": "Ticket Created?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                1152,
+                64
+            ]
+        },
+        {
+            "parameters": {
+                "chatId": "<YOUR_CHAT_ID>",
+                "text": "=⚠️ *SOC ALERT: A Ticket is generated*\n{{ $items(\"Format Premium Ticket\")[0].json.telegram_description }}\n\n✅ *Ticket Created:* `{{ $json.id }}`",
+                "additionalFields": {
+                    "parse_mode": "Markdown"
+                }
+            },
+            "id": "cbc9a98b-3f37-4419-bcfd-6b380c251c2e",
+            "name": "Telegram (Success)",
+            "type": "n8n-nodes-base.telegram",
+            "typeVersion": 1,
+            "position": [
+                1456,
+                176
+            ],
+            "webhookId": "54b199ac-abd1-4640-97cb-a351d9e399b4",
+            "credentials": {
+                "telegramApi": {
+                    "id": "<YOUR_CHAT_ID>",
+                    "name": "Telegram account 2"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "chatId": "<YOUR_CHAT_ID>",
+                "text": "❌ **Ticket Creation Failed**\n\nThe automation failed to create a ticket in Catalyst.\n\n**Error:** {{ $json.error || $json.message || \"Unknown Error\" }}",
+                "additionalFields": {
+                    "parse_mode": "Markdown"
+                }
+            },
+            "id": "fa5c895e-4a67-4fef-b431-bb4644054b0a",
+            "name": "Telegram (Fail)",
+            "type": "n8n-nodes-base.telegram",
+            "typeVersion": 1,
+            "position": [
+                1456,
+                -64
+            ],
+            "webhookId": "91009d73-81d6-4b14-a33d-1ebbfe76e615",
+            "credentials": {
+                "telegramApi": {
+                    "id": "<YOUR_CHAT_ID>",
+                    "name": "Telegram account 2"
+                }
+            }
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "Webhook (Wazuh Source)": {
+            "main": [
+                [
+                    {
+                        "node": "Extract Alert Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extract Alert Data": {
+            "main": [
+                [
+                    {
+                        "node": "Is Public IP?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Is Public IP?": {
+            "main": [
+                [
+                    {
+                        "node": "AbuseIPDB Enrichment",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Set Internal Defaults",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AbuseIPDB Enrichment": {
+            "main": [
+                [
+                    {
+                        "node": "Format Premium Ticket",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Set Internal Defaults": {
+            "main": [
+                [
+                    {
+                        "node": "Format Premium Ticket",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Format Premium Ticket": {
+            "main": [
+                [
+                    {
+                        "node": "Create Ticket in Catalyst1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Create Ticket in Catalyst1": {
+            "main": [
+                [
+                    {
+                        "node": "Ticket Created?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Ticket Created?": {
+            "main": [
+                [
+                    {
+                        "node": "Telegram (Success)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Telegram (Fail)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": true,
+    "settings": {
+        "executionOrder": "v1",
+        "availableInMCP": false
+    },
+    "versionId": "28688604-ec9e-4b9a-b7f0-ad2a92332f28",
+    "meta": {
+        "templateCredsSetupCompleted": true,
+        "instanceId": "a33c2dbdb2433a8862024a078c9f3d31c250d80e8a24d4cfbca73e14fbb1a292"
+    },
+    "id": "xx2FhgCXCz_r99BXUnRz3",
+    "tags": []
+}
